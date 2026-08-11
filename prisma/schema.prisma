@@ -1,0 +1,191 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum TaskType {
+  diaria
+  semanal
+  mensual
+  puntual
+}
+
+enum TaskStatus {
+  pendiente
+  en_proceso
+  depende_de_otro
+  completado
+  abandonado
+}
+
+enum MessageSource {
+  whatsapp
+  web
+}
+
+enum DraftedBy {
+  antonio_dictado
+  asistente_redactado
+}
+
+enum OutboundStatus {
+  borrador_pendiente
+  confirmado
+  enviado
+  fallido
+}
+
+enum ChatRole {
+  user
+  assistant
+}
+
+model Contact {
+  id           Int      @id @default(autoincrement())
+  name         String
+  phoneE164    String?  @unique
+  whatsappJid  String?  @unique
+  whatsappLid  String?  @unique
+  remoteJidAlt String?
+  notes        String?  @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tasks            Task[]
+  outboundMessages OutboundMessage[]
+  inboundReplies   InboundReply[]
+  chatMessages     ChatMessage[]
+
+  @@map("contacts")
+}
+
+model Task {
+  id                 Int           @id @default(autoincrement())
+  title              String
+  description        String?       @db.Text
+  type               TaskType
+  status             TaskStatus    @default(pendiente)
+  dueDate            DateTime?
+  recurrenceDay      Int?
+  reminderTime       String?
+  usefulData         Json?
+  dependsOnContactId Int?
+  dependsOnContact   Contact?      @relation(fields: [dependsOnContactId], references: [id])
+  source             MessageSource @default(web)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  completedAt        DateTime?
+  abandonedAt        DateTime?
+
+  occurrences      TaskOccurrence[]
+  reminderLogs     ReminderLog[]
+  outboundMessages OutboundMessage[]
+
+  @@index([status])
+  @@index([type])
+  @@index([dueDate])
+  @@map("tasks")
+}
+
+model TaskOccurrence {
+  id              Int        @id @default(autoincrement())
+  taskId          Int
+  task            Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  cycleDate       DateTime
+  status          TaskStatus @default(pendiente)
+  completedAt     DateTime?
+  nextReminderAt  DateTime?
+  escalationLevel Int        @default(0)
+  createdAt       DateTime   @default(now())
+
+  reminderLogs ReminderLog[]
+
+  @@unique([taskId, cycleDate])
+  @@index([status])
+  @@index([nextReminderAt])
+  @@map("task_occurrences")
+}
+
+model ReminderRule {
+  id                Int      @id @default(autoincrement())
+  type              TaskType @unique
+  escalationMinutes Json
+  maxEscalations    Int      @default(2)
+  updatedAt         DateTime @updatedAt
+
+  @@map("reminder_rules")
+}
+
+model ReminderLog {
+  id              Int             @id @default(autoincrement())
+  taskId          Int
+  task            Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  occurrenceId    Int?
+  occurrence      TaskOccurrence? @relation(fields: [occurrenceId], references: [id], onDelete: SetNull)
+  sentAt          DateTime        @default(now())
+  escalationLevel Int
+  messageText     String          @db.Text
+  respondedAt     DateTime?
+  responseText    String?         @db.Text
+
+  @@index([taskId])
+  @@map("reminders_log")
+}
+
+model OutboundMessage {
+  id                Int            @id @default(autoincrement())
+  contactId         Int
+  contact           Contact        @relation(fields: [contactId], references: [id])
+  taskId            Int?
+  task              Task?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  bodyText          String         @db.Text
+  status            OutboundStatus @default(borrador_pendiente)
+  draftedBy         DraftedBy
+  whatsappMessageId String?
+  createdAt         DateTime       @default(now())
+  confirmedAt       DateTime?
+  sentAt            DateTime?
+
+  inboundReplies InboundReply[]
+
+  @@index([status])
+  @@map("outbound_messages")
+}
+
+model InboundReply {
+  id                Int              @id @default(autoincrement())
+  contactId         Int
+  contact           Contact          @relation(fields: [contactId], references: [id])
+  outboundMessageId Int?
+  outboundMessage   OutboundMessage? @relation(fields: [outboundMessageId], references: [id], onDelete: SetNull)
+  bodyText          String           @db.Text
+  receivedAt        DateTime         @default(now())
+  notifiedAntonioAt DateTime?
+
+  @@map("inbound_replies")
+}
+
+model ChatMessage {
+  id        Int      @id @default(autoincrement())
+  contactId Int
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  role      ChatRole
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([contactId, createdAt])
+  @@map("chat_messages")
+}
+
+model Note {
+  id        Int           @id @default(autoincrement())
+  content   String        @db.Text
+  source    MessageSource @default(web)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@map("notes")
+}
