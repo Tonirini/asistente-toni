@@ -22,6 +22,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Plus } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { createTask } from "@/lib/actions/task-actions";
 
 const TYPE_LABELS: Record<TaskType, string> = {
@@ -42,6 +43,7 @@ export function TaskForm() {
   const [reminderTime, setReminderTime] = useState("");
   const [link, setLink] = useState("");
   const [monto, setMonto] = useState("");
+  const [isUrgent, setIsUrgent] = useState(false);
 
   function reset() {
     setType("puntual");
@@ -52,6 +54,7 @@ export function TaskForm() {
     setReminderTime("");
     setLink("");
     setMonto("");
+    setIsUrgent(false);
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -75,6 +78,7 @@ export function TaskForm() {
           recurrenceDay: recurrenceDay ? Number(recurrenceDay) : null,
           reminderTime: reminderTime || null,
           usefulData,
+          isUrgent,
         });
         toast.success("Tarea creada");
         reset();
@@ -196,6 +200,17 @@ export function TaskForm() {
                 onChange={(e) => setMonto(e.target.value)}
               />
             </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="isUrgent"
+              checked={isUrgent}
+              onCheckedChange={(v) => setIsUrgent(v === true)}
+            />
+            <Label htmlFor="isUrgent" className="text-destructive">
+              Urgente (el bot va a insistir más seguido)
+            </Label>
           </div>
 
           <Button type="submit" className="w-full" disabled={pending}>

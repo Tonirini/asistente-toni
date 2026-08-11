@@ -2,7 +2,7 @@ import type { ChatCompletionTool, ChatCompletionMessageParam } from "openai/reso
 import { getOpenAI } from "@/lib/openai";
 import { prisma } from "@/lib/db";
 import { cycleDateFor } from "@/lib/cycle";
-import { getAvisos, getHoy, getMes, getSemana } from "@/lib/tasks";
+import { getAvisos, getHoy, getKanban, getMes, getSemana } from "@/lib/tasks";
 import {
   createTask,
   findOrCreateContact,
@@ -46,8 +46,21 @@ const TOOLS: ChatCompletionTool[] = [
             description: "1-7 (lunes=1) si semanal; 1-31 si mensual.",
           },
           reminderTime: { type: ["string", "null"], description: "Hora HH:mm del aviso." },
+          urgente: {
+            type: "boolean",
+            description:
+              "true si Antonio dice que es urgente/importante/prioritario. El bot va a insistir con más frecuencia hasta que se confirme.",
+          },
         },
-        required: ["title", "description", "type", "dueDate", "recurrenceDay", "reminderTime"],
+        required: [
+          "title",
+          "description",
+          "type",
+          "dueDate",
+          "recurrenceDay",
+          "reminderTime",
+          "urgente",
+        ],
       },
     },
   },
@@ -94,12 +107,13 @@ const TOOLS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "consultar_tareas",
-      description: "Devuelve el estado actual de las tareas de Antonio para responder preguntas.",
+      description:
+        'Devuelve el estado actual de las tareas de Antonio. Para preguntas genéricas como "¿qué tengo pendiente?" o "¿ves mis tareas?" (sin especificar día/semana/mes), usá vista=todas — es la única que incluye TODO sin importar si tiene fecha o no. Usá hoy/semana/mes/avisos solo cuando Antonio pregunta específicamente por ese recorte.',
       parameters: {
         type: "object",
         additionalProperties: false,
         properties: {
-          vista: { type: "string", enum: ["hoy", "semana", "mes", "avisos"] },
+          vista: { type: "string", enum: ["hoy", "semana", "mes", "avisos", "todas"] },
         },
         required: ["vista"],
       },
@@ -296,7 +310,7 @@ const CONFIRMATION_REQUIRED = new Set([
 function summarizeForConfirmation(name: string, args: Record<string, unknown>): string {
   switch (name) {
     case "crear_tarea":
-      return `crear la tarea "${args.title}"${args.dueDate ? ` para el ${args.dueDate}` : ""}`;
+      return `crear la tarea "${args.title}"${args.dueDate ? ` para el ${args.dueDate}` : ""}${args.urgente ? " (urgente)" : ""}`;
     case "crear_nota":
       return `anotar: "${args.contenido}"`;
     case "borrar_nota":
@@ -366,8 +380,9 @@ async function performTool(name: string, args: Record<string, unknown>): Promise
         dueDate: args.dueDate ? new Date(`${args.dueDate}T00:00:00`) : null,
         recurrenceDay: (args.recurrenceDay as number) ?? null,
         reminderTime: (args.reminderTime as string) ?? null,
+        isUrgent: args.urgente === true,
       });
-      return `Creada la tarea #${task.id} "${task.title}" (${task.type}).`;
+      return `Creada la tarea #${task.id} "${task.title}" (${task.type}${task.isUrgent ? ", urgente" : ""}).`;
     }
 
     case "completar_tarea": {
@@ -411,10 +426,24 @@ async function performTool(name: string, args: Record<string, unknown>): Promise
           return `Mes (${progress.completed}/${progress.total}):\n${summarizeItems(items)}`;
         }
         case "avisos": {
-          const { proximosItems, vencidasCount } = await getAvisos();
-          return `Avisos próximos (${vencidasCount} vencidos):\n${summarizeItems(
+          const { proximosItems, sinFechaItems, vencidasCount } = await getAvisos();
+          const conFecha = summarizeItems(
             proximosItems.map((i) => ({ task: i.task, isDone: false }))
-          )}`;
+          );
+          const sinFecha = summarizeItems(
+            sinFechaItems.map((i) => ({ task: i.task, isDone: false }))
+          );
+          return `Avisos con fecha (${vencidasCount} vencidos):\n${conFecha}\n\nPendientes sin fecha:\n${sinFecha}`;
+        }
+        case "todas": {
+          const kanban = await getKanban();
+          const activos = [
+            ...kanban.pendiente,
+            ...kanban.en_proceso,
+            ...kanban.depende_de_otro,
+          ];
+          if (activos.length === 0) return "No hay ninguna tarea activa.";
+          return activos.map((t) => `[${t.status}] ${t.title}`).join("\n");
         }
         default:
           return "Vista desconocida.";
@@ -435,6 +464,7 @@ async function performTool(name: string, args: Record<string, unknown>): Promise
         `Descripción: ${task.description || "(sin descripción)"}`,
         `Tipo: ${task.type}`,
         `Estado: ${task.status}`,
+        `Urgente: ${task.isUrgent ? "sí" : "no"}`,
       ];
       if (task.dueDate) lines.push(`Fecha: ${task.dueDate.toISOString().slice(0, 10)}`);
       if (task.reminderTime) lines.push(`Hora del aviso: ${task.reminderTime}`);

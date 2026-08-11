@@ -1,12 +1,14 @@
 import type { Task } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { occurrenceDueMoment, withReminderTime } from "@/lib/cycle";
+import { URGENT_ESCALATION_MINUTES } from "@/lib/reminder-schedule";
 import { sendWhatsAppMessage } from "@/lib/whatsapp/evolution";
 
 type UsefulData = { link?: string; monto?: number; cuenta?: string };
 
 function buildReminderMessage(task: Task): string {
-  const lines = [`⏰ Recordatorio: ${task.title}`];
+  const prefix = task.isUrgent ? "🔴 URGENTE" : "⏰ Recordatorio";
+  const lines = [`${prefix}: ${task.title}`];
   if (task.description) lines.push(task.description);
 
   const usefulData = task.usefulData as UsefulData | null;
@@ -78,19 +80,38 @@ async function processPuntuales(now: Date) {
     where: {
       type: "puntual",
       status: { notIn: ["completado", "abandonado"] },
-      dueDate: { not: null },
-      reminderLogs: { none: {} },
+      nextReminderAt: { lte: now },
     },
   });
 
   for (const task of candidates) {
-    const dueMoment = withReminderTime(task.dueDate!, task.reminderTime);
-    if (dueMoment > now) continue;
-
     const messageText = buildReminderMessage(task);
     await sendWhatsAppMessage(antonioPhone(), messageText);
     await prisma.reminderLog.create({
-      data: { taskId: task.id, escalationLevel: 0, messageText },
+      data: { taskId: task.id, escalationLevel: task.escalationLevel, messageText },
+    });
+
+    const dueMoment = withReminderTime(task.dueDate ?? task.createdAt, task.reminderTime);
+    const nextLevel = task.escalationLevel + 1;
+    let nextReminderAt: Date | null = null;
+
+    if (task.isUrgent) {
+      if (nextLevel < URGENT_ESCALATION_MINUTES.length) {
+        nextReminderAt = new Date(
+          dueMoment.getTime() + URGENT_ESCALATION_MINUTES[nextLevel] * 60_000
+        );
+      }
+    } else {
+      const rule = await prisma.reminderRule.findUnique({ where: { type: "puntual" } });
+      const escalationMinutes = (rule?.escalationMinutes as number[]) ?? [];
+      if (rule && nextLevel < rule.maxEscalations && escalationMinutes[nextLevel] != null) {
+        nextReminderAt = new Date(dueMoment.getTime() + escalationMinutes[nextLevel] * 60_000);
+      }
+    }
+
+    await prisma.task.update({
+      where: { id: task.id },
+      data: { escalationLevel: nextLevel, nextReminderAt },
     });
   }
 }

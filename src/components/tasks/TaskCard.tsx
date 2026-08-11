@@ -3,7 +3,7 @@
 import { useTransition } from "react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { Link2, User } from "lucide-react";
+import { Link2, User, Flame } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { cycleDateFor } from "@/lib/cycle";
@@ -34,7 +34,8 @@ export function TaskCard({ item }: { item: TaskViewItem }) {
   return (
     <div
       className={cn(
-        "flex items-start gap-3 rounded-xl border border-border bg-card p-3 shadow-sm transition-opacity duration-150",
+        "flex items-start gap-3 rounded-xl border bg-card p-3 shadow-sm transition-opacity duration-150",
+        task.isUrgent ? "border-destructive/40" : "border-border",
         pending && "opacity-60"
       )}
     >
@@ -47,10 +48,11 @@ export function TaskCard({ item }: { item: TaskViewItem }) {
       <div className="min-w-0 flex-1 space-y-1">
         <p
           className={cn(
-            "text-sm font-medium text-foreground",
+            "flex items-center gap-1 text-sm font-medium text-foreground",
             isDone && "text-muted-foreground line-through"
           )}
         >
+          {task.isUrgent && <Flame className="size-3.5 shrink-0 text-destructive" />}
           {task.title}
         </p>
         {task.description && (

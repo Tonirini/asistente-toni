@@ -3,6 +3,7 @@
 import { useDraggable } from "@dnd-kit/core";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+import { Flame } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Task, Contact } from "@prisma/client";
 
@@ -34,11 +35,15 @@ export function KanbanCard({
       {...listeners}
       {...attributes}
       className={cn(
-        "cursor-grab touch-none space-y-1 rounded-xl border border-border bg-card p-3 shadow-sm active:cursor-grabbing",
+        "cursor-grab touch-none space-y-1 rounded-xl border bg-card p-3 shadow-sm active:cursor-grabbing",
+        task.isUrgent ? "border-destructive/40" : "border-border",
         isDragging && "z-50 opacity-70"
       )}
     >
-      <p className="text-sm font-medium text-foreground">{task.title}</p>
+      <p className="flex items-center gap-1 text-sm font-medium text-foreground">
+        {task.isUrgent && <Flame className="size-3.5 shrink-0 text-destructive" />}
+        {task.title}
+      </p>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
         <span>{TYPE_LABELS[task.type]}</span>
         {task.dueDate && (

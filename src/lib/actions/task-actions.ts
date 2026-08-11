@@ -4,7 +4,10 @@ import { revalidatePath } from "next/cache";
 import type { Prisma, TaskStatus, TaskType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { cycleDateFor } from "@/lib/cycle";
-import { computeInitialReminderAt } from "@/lib/reminder-schedule";
+import {
+  computeInitialReminderAt,
+  computePuntualInitialReminderAt,
+} from "@/lib/reminder-schedule";
 
 const ALL_VIEW_PATHS = [
   "/hoy",
@@ -28,6 +31,7 @@ export type CreateTaskInput = {
   reminderTime?: string | null;
   usefulData?: Record<string, unknown> | null;
   dependsOnContactId?: number | null;
+  isUrgent?: boolean;
 };
 
 export async function createTask(input: CreateTaskInput) {
@@ -48,6 +52,7 @@ export async function createTask(input: CreateTaskInput) {
         | Prisma.InputJsonValue
         | undefined,
       dependsOnContactId: input.dependsOnContactId ?? null,
+      isUrgent: input.isUrgent ?? false,
       source: "web",
     },
   });
@@ -67,6 +72,15 @@ export async function createTask(input: CreateTaskInput) {
         nextReminderAt,
       },
     });
+  } else {
+    const nextReminderAt = await computePuntualInitialReminderAt(
+      task.dueDate,
+      task.reminderTime,
+      task.isUrgent
+    );
+    if (nextReminderAt) {
+      await prisma.task.update({ where: { id: task.id }, data: { nextReminderAt } });
+    }
   }
 
   revalidateAll();
@@ -90,6 +104,8 @@ export async function updateTaskStatus(
         newStatus === "depende_de_otro" ? dependsOnContactId : null,
       completedAt: newStatus === "completado" ? new Date() : null,
       abandonedAt: newStatus === "abandonado" ? new Date() : null,
+      nextReminderAt:
+        newStatus === "completado" || newStatus === "abandonado" ? null : undefined,
     },
   });
 

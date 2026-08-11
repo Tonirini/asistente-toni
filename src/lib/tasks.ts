@@ -86,7 +86,7 @@ export async function getHoy() {
   const diarias = await prisma.task.findMany({
     where: { type: "diaria", status: { notIn: ["abandonado"] } },
     include: { occurrences: { where: { cycleDate: todayCycle } } },
-    orderBy: { title: "asc" },
+    orderBy: [{ isUrgent: "desc" }, { title: "asc" }],
   });
 
   const puntualesHoy = await prisma.task.findMany({
@@ -96,7 +96,7 @@ export async function getHoy() {
       dueDate: { gte: today, lt: tomorrow },
     },
     include: { dependsOnContact: true },
-    orderBy: { dueDate: "asc" },
+    orderBy: [{ isUrgent: "desc" }, { dueDate: "asc" }],
   });
 
   const vencidas = await prisma.task.findMany({
@@ -106,7 +106,7 @@ export async function getHoy() {
       dueDate: { lt: today },
     },
     include: { dependsOnContact: true },
-    orderBy: { dueDate: "asc" },
+    orderBy: [{ isUrgent: "desc" }, { dueDate: "asc" }],
   });
 
   const items: TaskViewItem[] = [
@@ -139,7 +139,7 @@ export async function getSemana() {
   const semanales = await prisma.task.findMany({
     where: { type: "semanal", status: { notIn: ["abandonado"] } },
     include: { occurrences: { where: { cycleDate: cycle } } },
-    orderBy: { title: "asc" },
+    orderBy: [{ isUrgent: "desc" }, { title: "asc" }],
   });
 
   const items: TaskViewItem[] = semanales.map((t) => ({
@@ -160,7 +160,7 @@ export async function getMes() {
   const mensuales = await prisma.task.findMany({
     where: { type: "mensual", status: { notIn: ["abandonado"] } },
     include: { occurrences: { where: { cycleDate: cycle } } },
-    orderBy: { title: "asc" },
+    orderBy: [{ isUrgent: "desc" }, { title: "asc" }],
   });
 
   const items: TaskViewItem[] = mensuales.map((t) => ({
@@ -184,7 +184,7 @@ export async function getAvisos() {
       status: { notIn: ["completado", "abandonado"] },
     },
     include: { dependsOnContact: true },
-    orderBy: { dueDate: "asc" },
+    orderBy: [{ isUrgent: "desc" }, { dueDate: "asc" }],
   });
 
   const historial = await prisma.task.findMany({
@@ -236,7 +236,7 @@ export async function getAvisos() {
 export async function getKanban() {
   const tasks = await prisma.task.findMany({
     include: { dependsOnContact: true },
-    orderBy: { updatedAt: "desc" },
+    orderBy: [{ isUrgent: "desc" }, { updatedAt: "desc" }],
   });
 
   return {

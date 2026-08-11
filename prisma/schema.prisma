@@ -78,6 +78,9 @@ model Task {
   recurrenceDay      Int?
   reminderTime       String?
   usefulData         Json?
+  isUrgent           Boolean       @default(false)
+  nextReminderAt     DateTime?
+  escalationLevel    Int           @default(0)
   dependsOnContactId Int?
   dependsOnContact   Contact?      @relation(fields: [dependsOnContactId], references: [id])
   source             MessageSource @default(web)
@@ -93,6 +96,7 @@ model Task {
   @@index([status])
   @@index([type])
   @@index([dueDate])
+  @@index([nextReminderAt])
   @@map("tasks")
 }
 
