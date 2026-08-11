@@ -12,7 +12,7 @@ import {
 import { createNote, deleteNote } from "@/lib/actions/note-actions";
 import { getNotes } from "@/lib/notes";
 import { sendWhatsAppMessage, type EvolutionInstanceKey } from "@/lib/whatsapp/evolution";
-import type { TaskStatus } from "@prisma/client";
+import type { Prisma, TaskStatus } from "@prisma/client";
 
 const MAX_HISTORY = 20;
 const MAX_TOOL_ITERATIONS = 4;
@@ -237,6 +237,23 @@ const TOOLS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "confirmar_accion",
+      description:
+        'Ejecuta la última acción que quedó pendiente de confirmar (crear/borrar nota, crear/completar/cambiar tarea) porque Antonio dijo que sí ("dale", "confirmo", "sí").',
+      parameters: { type: "object", additionalProperties: false, properties: {}, required: [] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "cancelar_accion",
+      description: "Descarta la última acción pendiente de confirmar, sin ejecutarla.",
+      parameters: { type: "object", additionalProperties: false, properties: {}, required: [] },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "confirmar_recordatorio",
       description:
         'Usar cuando Antonio confirma que ya hizo algo que el bot le había recordado (ej. "listo", "ya pagué"), sin nombrar la tarea explícitamente.',
@@ -268,7 +285,77 @@ function summarizeItems(items: { task: { title: string }; isDone: boolean }[]) {
   return items.map((i) => `${i.isDone ? "[hecho]" : "[pendiente]"} ${i.task.title}`).join("\n");
 }
 
-async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
+const CONFIRMATION_REQUIRED = new Set([
+  "crear_tarea",
+  "crear_nota",
+  "borrar_nota",
+  "completar_tarea",
+  "cambiar_estado",
+]);
+
+function summarizeForConfirmation(name: string, args: Record<string, unknown>): string {
+  switch (name) {
+    case "crear_tarea":
+      return `crear la tarea "${args.title}"${args.dueDate ? ` para el ${args.dueDate}` : ""}`;
+    case "crear_nota":
+      return `anotar: "${args.contenido}"`;
+    case "borrar_nota":
+      return `borrar la nota que coincida con "${args.referencia}"`;
+    case "completar_tarea":
+      return `marcar como hecha la tarea "${args.referencia}"`;
+    case "cambiar_estado":
+      return `cambiar "${args.referencia}" a ${args.nuevo_estado}`;
+    default:
+      return name;
+  }
+}
+
+async function runTool(
+  name: string,
+  args: Record<string, unknown>,
+  contactId: number
+): Promise<string> {
+  if (name === "confirmar_accion") {
+    const pending = await prisma.pendingAction.findFirst({
+      where: { contactId },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!pending) return "No hay ninguna acción pendiente de confirmar.";
+    await prisma.pendingAction.delete({ where: { id: pending.id } });
+    return performTool(
+      pending.toolName,
+      pending.argsJson as Record<string, unknown>
+    );
+  }
+
+  if (name === "cancelar_accion") {
+    const pending = await prisma.pendingAction.findFirst({
+      where: { contactId },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!pending) return "No hay ninguna acción pendiente de cancelar.";
+    await prisma.pendingAction.delete({ where: { id: pending.id } });
+    return "Cancelado, no hice nada.";
+  }
+
+  if (CONFIRMATION_REQUIRED.has(name)) {
+    const summary = summarizeForConfirmation(name, args);
+    await prisma.pendingAction.deleteMany({ where: { contactId } });
+    await prisma.pendingAction.create({
+      data: {
+        contactId,
+        toolName: name,
+        argsJson: args as Prisma.InputJsonValue,
+        summary,
+      },
+    });
+    return `PENDIENTE DE CONFIRMAR — todavía no se hizo. Preguntale a Antonio: "¿Confirmás ${summary}?" y esperá que diga que sí antes de usar confirmar_accion.`;
+  }
+
+  return performTool(name, args);
+}
+
+async function performTool(name: string, args: Record<string, unknown>): Promise<string> {
   switch (name) {
     case "crear_tarea": {
       const type = args.type as "diaria" | "semanal" | "mensual" | "puntual";
@@ -505,6 +592,7 @@ Antonio tiene TDAH: el sistema existe para que nada se pierda y para que las con
 Reglas:
 - Contestá corto, como un mensaje de WhatsApp real (1-3 líneas), en español rioplatense informal, sin emojis de más.
 - Para crear, completar, cambiar de estado o confirmar una tarea, SIEMPRE usá la herramienta correspondiente — nunca digas que hiciste algo sin haber llamado a la herramienta.
+- IMPORTANTE: crear_tarea, crear_nota, borrar_nota, completar_tarea y cambiar_estado NO se ejecutan al toque — quedan pendientes de confirmar. Cuando llames a una de esas y te devuelva "PENDIENTE DE CONFIRMAR", mostrale el resumen a Antonio tal cual y esperá su respuesta. Si dice que sí ("dale", "sí", "confirmo"), recién ahí llamá a confirmar_accion. Si dice que no, llamá a cancelar_accion. Nunca dos herramientas de estas seguidas sin que Antonio confirme la primera en el medio.
 - Para responder preguntas sobre el estado de sus tareas, SIEMPRE consultá con la herramienta consultar_tareas antes de contestar — no inventes datos.
 - La conversación NO es una fuente confiable de qué existe realmente — la app puede cambiar por fuera del chat. Antes de crear cualquier nota o tarea, consultá primero con listar_notas o consultar_tareas si ya existe algo parecido (por título/contenido), sin importar lo que la conversación diga que pasó antes. Si ya existe, no la vuelvas a crear — avisá que ya estaba.
 - Si Antonio pregunta si algo ya está anotado/guardado, o pide que confirmes/revises algo, consultá con la herramienta correspondiente y contestá según lo que encontrás — nunca "por las dudas" vuelvas a crear algo para curarte en salud, eso genera duplicados.
@@ -578,7 +666,7 @@ export async function runAgent(
       } catch {
         // ignora argumentos mal formados, la herramienta maneja los faltantes
       }
-      const result = await executeTool(toolCall.function.name, args);
+      const result = await runTool(toolCall.function.name, args, contactId);
       messages.push({ role: "tool", tool_call_id: toolCall.id, content: result });
     }
   }

@@ -63,6 +63,7 @@ model Contact {
   outboundMessages OutboundMessage[]
   inboundReplies   InboundReply[]
   chatMessages     ChatMessage[]
+  pendingActions   PendingAction[]
 
   @@map("contacts")
 }
@@ -195,4 +196,17 @@ model Note {
   updatedAt DateTime      @updatedAt
 
   @@map("notes")
+}
+
+model PendingAction {
+  id        Int      @id @default(autoincrement())
+  contactId Int
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  toolName  String
+  argsJson  Json
+  summary   String   @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([contactId])
+  @@map("pending_actions")
 }
