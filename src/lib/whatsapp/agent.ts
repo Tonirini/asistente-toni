@@ -1,5 +1,5 @@
-import OpenAI from "openai";
 import type { ChatCompletionTool, ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { getOpenAI } from "@/lib/openai";
 import { prisma } from "@/lib/db";
 import { cycleDateFor } from "@/lib/cycle";
 import { getAvisos, getHoy, getMes, getSemana } from "@/lib/tasks";
@@ -12,8 +12,6 @@ import {
 import { createNote } from "@/lib/actions/note-actions";
 import { getNotes } from "@/lib/notes";
 import type { TaskStatus } from "@prisma/client";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const MAX_HISTORY = 20;
 const MAX_TOOL_ITERATIONS = 4;
@@ -353,7 +351,7 @@ export async function runAgent(contactId: number, userMessage: string): Promise<
   let finalReply = "";
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-    const completion = await openai.chat.completions.create({
+    const completion = await getOpenAI().chat.completions.create({
       model: "gpt-4o-mini",
       messages,
       tools: TOOLS,
