@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { CalendarGrid, type CalendarItem } from "@/components/calendar/CalendarGrid";
 import { getCalendarTasks } from "@/lib/tasks";
 
+export const dynamic = "force-dynamic";
+
 export default async function CalendarioPage(
   props: PageProps<"/calendario">
 ) {

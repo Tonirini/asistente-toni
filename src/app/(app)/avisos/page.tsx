@@ -5,6 +5,8 @@ import { TaskList } from "@/components/tasks/TaskList";
 import { TaskForm } from "@/components/tasks/TaskForm";
 import { getAvisos } from "@/lib/tasks";
 
+export const dynamic = "force-dynamic";
+
 export default async function AvisosPage() {
   const {
     proximosItems,

@@ -4,6 +4,8 @@ import { TaskForm } from "@/components/tasks/TaskForm";
 import { getKanban } from "@/lib/tasks";
 import { prisma } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 export default async function PendientesPage() {
   const [kanban, contacts] = await Promise.all([
     getKanban(),

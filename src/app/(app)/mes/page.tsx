@@ -5,6 +5,8 @@ import { TaskList } from "@/components/tasks/TaskList";
 import { TaskForm } from "@/components/tasks/TaskForm";
 import { getMes } from "@/lib/tasks";
 
+export const dynamic = "force-dynamic";
+
 export default async function MesPage() {
   const { items, progress, streak } = await getMes();
 
