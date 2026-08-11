@@ -124,8 +124,13 @@ export async function toggleOccurrenceDone(
   revalidateAll();
 }
 
-export async function findOrCreateContact(name: string) {
+export async function findOrCreateContact(name: string, phoneE164?: string | null) {
   const existing = await prisma.contact.findFirst({ where: { name } });
-  if (existing) return existing;
-  return prisma.contact.create({ data: { name } });
+  if (existing) {
+    if (phoneE164 && !existing.phoneE164) {
+      return prisma.contact.update({ where: { id: existing.id }, data: { phoneE164 } });
+    }
+    return existing;
+  }
+  return prisma.contact.create({ data: { name, phoneE164: phoneE164 ?? null } });
 }

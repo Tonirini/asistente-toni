@@ -1,23 +1,41 @@
 import { prisma } from "@/lib/db";
 import type { Contact } from "@prisma/client";
 
-function apiUrl(path: string) {
-  const base = process.env.EVOLUTION_API_URL!.replace(/\/$/, "");
-  const instance = process.env.EVOLUTION_INSTANCE!;
-  return `${base}${path}/${instance}`;
-}
+export type EvolutionInstanceKey = "pruebas" | "gospa";
 
-function headers() {
+function instanceConfig(instance: EvolutionInstanceKey) {
+  if (instance === "gospa") {
+    return {
+      name: process.env.EVOLUTION_GOSPA_INSTANCE ?? "Gospa",
+      apiKey: process.env.EVOLUTION_GOSPA_API_KEY!,
+    };
+  }
   return {
-    "Content-Type": "application/json",
-    apikey: process.env.EVOLUTION_API_KEY!,
+    name: process.env.EVOLUTION_INSTANCE!,
+    apiKey: process.env.EVOLUTION_API_KEY!,
   };
 }
 
-export async function sendWhatsAppMessage(toJidOrPhone: string, text: string) {
-  const res = await fetch(apiUrl("/message/sendText"), {
+function apiUrl(path: string, instance: EvolutionInstanceKey) {
+  const base = process.env.EVOLUTION_API_URL!.replace(/\/$/, "");
+  return `${base}${path}/${instanceConfig(instance).name}`;
+}
+
+function headers(instance: EvolutionInstanceKey) {
+  return {
+    "Content-Type": "application/json",
+    apikey: instanceConfig(instance).apiKey,
+  };
+}
+
+export async function sendWhatsAppMessage(
+  toJidOrPhone: string,
+  text: string,
+  instance: EvolutionInstanceKey = "pruebas"
+) {
+  const res = await fetch(apiUrl("/message/sendText", instance), {
     method: "POST",
-    headers: headers(),
+    headers: headers(instance),
     body: JSON.stringify({ number: toJidOrPhone, text }),
   });
 
@@ -30,9 +48,9 @@ export async function sendWhatsAppMessage(toJidOrPhone: string, text: string) {
 }
 
 export async function transcribeAudioMessage(messageKey: unknown) {
-  const res = await fetch(apiUrl("/chat/getBase64FromMediaMessage"), {
+  const res = await fetch(apiUrl("/chat/getBase64FromMediaMessage", "pruebas"), {
     method: "POST",
-    headers: headers(),
+    headers: headers("pruebas"),
     body: JSON.stringify({ message: { key: messageKey } }),
   });
 

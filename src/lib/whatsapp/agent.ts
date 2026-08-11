@@ -11,6 +11,7 @@ import {
 } from "@/lib/actions/task-actions";
 import { createNote, deleteNote } from "@/lib/actions/note-actions";
 import { getNotes } from "@/lib/notes";
+import { sendWhatsAppMessage, type EvolutionInstanceKey } from "@/lib/whatsapp/evolution";
 import type { TaskStatus } from "@prisma/client";
 
 const MAX_HISTORY = 20;
@@ -167,6 +168,75 @@ const TOOLS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "preparar_mensaje_tercero",
+      description:
+        'Prepara un mensaje de WhatsApp para mandarle a otra persona (no Antonio). Si Antonio dio el texto EXACTO a mandar ("mandale a X esto: ..."), se envía directo. Si Antonio te pidió que VOS redactes el mensaje, queda como borrador y hay que confirmarlo con confirmar_envio antes de que salga — nunca lo mandes sin esa confirmación en ese caso.',
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          destinatario_nombre: { type: "string" },
+          destinatario_telefono: {
+            type: ["string", "null"],
+            description:
+              "Número en formato +549... Si no lo tenés y no hay un contacto guardado con ese nombre, dejalo null y preguntale a Antonio el número antes de llamar a esta herramienta.",
+          },
+          mensaje: { type: "string" },
+          instancia: {
+            type: "string",
+            enum: ["pruebas", "gospa"],
+            description:
+              "pruebas = tu WhatsApp personal. gospa = WhatsApp del negocio. Si no está claro cuál usar, preguntale a Antonio antes de llamar a esta herramienta.",
+          },
+          dictado_por_antonio: {
+            type: "boolean",
+            description: "true si Antonio dio el texto exacto, false si el mensaje lo redactaste vos.",
+          },
+        },
+        required: [
+          "destinatario_nombre",
+          "destinatario_telefono",
+          "mensaje",
+          "instancia",
+          "dictado_por_antonio",
+        ],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "confirmar_envio",
+      description:
+        'Envía un mensaje que había quedado como borrador pendiente, cuando Antonio confirma ("dale", "mandalo", "sí"). NUNCA envíes un borrador sin este paso.',
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          referencia: { type: ["string", "null"], description: "Nombre del destinatario si hay más de un borrador pendiente." },
+        },
+        required: ["referencia"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "cancelar_envio",
+      description: "Cancela un mensaje que había quedado como borrador pendiente, sin enviarlo.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          referencia: { type: ["string", "null"] },
+        },
+        required: ["referencia"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "confirmar_recordatorio",
       description:
         'Usar cuando Antonio confirma que ya hizo algo que el bot le había recordado (ej. "listo", "ya pagué"), sin nombrar la tarea explícitamente.',
@@ -309,6 +379,94 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       return `Borrada: "${note.content}".`;
     }
 
+    case "preparar_mensaje_tercero": {
+      const instancia = (args.instancia as EvolutionInstanceKey) ?? "pruebas";
+      let phone = args.destinatario_telefono ? String(args.destinatario_telefono) : null;
+
+      if (!phone) {
+        const existing = await prisma.contact.findFirst({
+          where: { name: { contains: String(args.destinatario_nombre) }, phoneE164: { not: null } },
+        });
+        phone = existing?.phoneE164 ?? null;
+      }
+
+      if (!phone) {
+        return `No tengo el número de "${args.destinatario_nombre}". Preguntale a Antonio el número antes de seguir.`;
+      }
+
+      const contact = await findOrCreateContact(String(args.destinatario_nombre), phone);
+      const mensaje = String(args.mensaje);
+
+      if (args.dictado_por_antonio) {
+        await sendWhatsAppMessage(phone, mensaje, instancia);
+        await prisma.outboundMessage.create({
+          data: {
+            contactId: contact.id,
+            bodyText: mensaje,
+            status: "enviado",
+            draftedBy: "antonio_dictado",
+            instance: instancia,
+            sentAt: new Date(),
+          },
+        });
+        return `Enviado a ${contact.name}: "${mensaje}"`;
+      }
+
+      await prisma.outboundMessage.create({
+        data: {
+          contactId: contact.id,
+          bodyText: mensaje,
+          status: "borrador_pendiente",
+          draftedBy: "asistente_redactado",
+          instance: instancia,
+        },
+      });
+      return `Borrador para ${contact.name} (sin enviar todavía, falta tu confirmación): "${mensaje}"`;
+    }
+
+    case "confirmar_envio": {
+      const referencia = args.referencia ? String(args.referencia) : null;
+      const draft = await prisma.outboundMessage.findFirst({
+        where: {
+          status: "borrador_pendiente",
+          ...(referencia ? { contact: { name: { contains: referencia } } } : {}),
+        },
+        orderBy: { createdAt: "desc" },
+        include: { contact: true },
+      });
+
+      if (!draft) return "No tengo ningún mensaje pendiente de confirmar.";
+      if (!draft.contact.phoneE164) return `No tengo el número de ${draft.contact.name}.`;
+
+      await sendWhatsAppMessage(
+        draft.contact.phoneE164,
+        draft.bodyText,
+        draft.instance as EvolutionInstanceKey
+      );
+      await prisma.outboundMessage.update({
+        where: { id: draft.id },
+        data: { status: "enviado", confirmedAt: new Date(), sentAt: new Date() },
+      });
+
+      return `Enviado a ${draft.contact.name}: "${draft.bodyText}"`;
+    }
+
+    case "cancelar_envio": {
+      const referencia = args.referencia ? String(args.referencia) : null;
+      const draft = await prisma.outboundMessage.findFirst({
+        where: {
+          status: "borrador_pendiente",
+          ...(referencia ? { contact: { name: { contains: referencia } } } : {}),
+        },
+        orderBy: { createdAt: "desc" },
+        include: { contact: true },
+      });
+
+      if (!draft) return "No tengo ningún mensaje pendiente de confirmar.";
+      await prisma.outboundMessage.delete({ where: { id: draft.id } });
+      return `Cancelado el mensaje para ${draft.contact.name}.`;
+    }
+
     case "confirmar_recordatorio": {
       const referencia = args.referencia ? String(args.referencia) : null;
       const pendingLog = await prisma.reminderLog.findFirst({
@@ -354,6 +512,8 @@ Reglas:
 - Crear una tarea NUNCA es lo mismo que completarla. Jamás marques algo como completado salvo que Antonio diga explícitamente que ya lo hizo en la vida real.
 - Si en algún momento no estás seguro de si algo se ejecutó de verdad, decilo así ("no estoy seguro, dejame revisar") en vez de afirmar que se hizo — y después confirmá con la herramienta correspondiente antes de responder.
 - Si el pedido es ambiguo (no está claro el tipo de tarea, la fecha, o a qué tarea se refiere), preguntá antes de actuar en vez de adivinar.
+- Regla no negociable sobre mensajes a terceros: si Antonio te dictó el texto EXACTO, mandalo directo con preparar_mensaje_tercero (dictado_por_antonio=true). Si te pidió que VOS redactes el mensaje, usá preparar_mensaje_tercero con dictado_por_antonio=false, mostrale el borrador a Antonio, y esperá que diga algo como "dale"/"mandalo"/"sí" para recién ahí usar confirmar_envio. Jamás mandes un mensaje redactado por vos sin ese paso, sin importar cuán urgente parezca.
+- Si no sabés a qué WhatsApp mandar (personal o del negocio) o no tenés el número del destinatario, preguntá — no asumas.
 - Podés charlar un poco y seguir el hilo de la conversación, pero el objetivo siempre es no perder de vista tareas y recordatorios.
 - Hoy es {TODAY} (América/Argentina/Córdoba).`;
 
