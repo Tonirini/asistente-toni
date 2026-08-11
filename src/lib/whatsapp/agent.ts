@@ -9,7 +9,7 @@ import {
   toggleOccurrenceDone,
   updateTaskStatus,
 } from "@/lib/actions/task-actions";
-import { createNote } from "@/lib/actions/note-actions";
+import { createNote, deleteNote } from "@/lib/actions/note-actions";
 import { getNotes } from "@/lib/notes";
 import type { TaskStatus } from "@prisma/client";
 
@@ -152,6 +152,21 @@ const TOOLS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "borrar_nota",
+      description: "Borra una nota guardada que coincida con la referencia.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          referencia: { type: "string", description: "Texto que identifica la nota (parte del contenido)." },
+        },
+        required: ["referencia"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "confirmar_recordatorio",
       description:
         'Usar cuando Antonio confirma que ya hizo algo que el bot le había recordado (ej. "listo", "ya pagué"), sin nombrar la tarea explícitamente.',
@@ -284,6 +299,16 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       return notes.map((n) => `- ${n.content}`).join("\n");
     }
 
+    case "borrar_nota": {
+      const note = await prisma.note.findFirst({
+        where: { content: { contains: String(args.referencia) } },
+        orderBy: { createdAt: "desc" },
+      });
+      if (!note) return `No encontré ninguna nota que coincida con "${args.referencia}".`;
+      await deleteNote(note.id);
+      return `Borrada: "${note.content}".`;
+    }
+
     case "confirmar_recordatorio": {
       const referencia = args.referencia ? String(args.referencia) : null;
       const pendingLog = await prisma.reminderLog.findFirst({
@@ -323,11 +348,27 @@ Reglas:
 - Contestá corto, como un mensaje de WhatsApp real (1-3 líneas), en español rioplatense informal, sin emojis de más.
 - Para crear, completar, cambiar de estado o confirmar una tarea, SIEMPRE usá la herramienta correspondiente — nunca digas que hiciste algo sin haber llamado a la herramienta.
 - Para responder preguntas sobre el estado de sus tareas, SIEMPRE consultá con la herramienta consultar_tareas antes de contestar — no inventes datos.
+- Si Antonio pregunta si algo ya está anotado/guardado, o pide que confirmes/revises algo que le dijiste antes, consultá primero con listar_notas o consultar_tareas — NUNCA vuelvas a crear la nota o tarea "por las dudas", eso genera duplicados.
+- Antes de crear una nota o tarea, fijate en la conversación reciente si ya la creaste — no repitas una creación por un mensaje repetido o una confirmación.
+- Al anotar algo, usá las palabras del propio Antonio en vez de reformular.
+- Crear una tarea NUNCA es lo mismo que completarla. Jamás marques algo como completado salvo que Antonio diga explícitamente que ya lo hizo en la vida real.
+- Si en algún momento no estás seguro de si algo se ejecutó de verdad, decilo así ("no estoy seguro, dejame revisar") en vez de afirmar que se hizo — y después confirmá con la herramienta correspondiente antes de responder.
 - Si el pedido es ambiguo (no está claro el tipo de tarea, la fecha, o a qué tarea se refiere), preguntá antes de actuar en vez de adivinar.
 - Podés charlar un poco y seguir el hilo de la conversación, pero el objetivo siempre es no perder de vista tareas y recordatorios.
 - Hoy es {TODAY} (América/Argentina/Córdoba).`;
 
-export async function runAgent(contactId: number, userMessage: string): Promise<string> {
+export async function runAgent(
+  contactId: number,
+  userMessage: string,
+  whatsappMessageId?: string
+): Promise<string | null> {
+  if (whatsappMessageId) {
+    const existing = await prisma.chatMessage.findUnique({
+      where: { whatsappMessageId },
+    });
+    if (existing) return null; // ya procesado — WhatsApp/Evolution reentregó el mismo mensaje
+  }
+
   const history = await prisma.chatMessage.findMany({
     where: { contactId },
     orderBy: { createdAt: "desc" },
@@ -346,7 +387,9 @@ export async function runAgent(contactId: number, userMessage: string): Promise<
     { role: "user", content: userMessage },
   ];
 
-  await prisma.chatMessage.create({ data: { contactId, role: "user", content: userMessage } });
+  await prisma.chatMessage.create({
+    data: { contactId, role: "user", content: userMessage, whatsappMessageId },
+  });
 
   let finalReply = "";
 

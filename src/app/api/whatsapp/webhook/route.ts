@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
 
     if (!text) return Response.json({ ok: true });
 
-    const reply = await handleIncomingMessage(contact, text, fromAntonio);
+    const reply = await handleIncomingMessage(contact, text, fromAntonio, key.id);
     if (reply) {
       await sendWhatsAppMessage(key.remoteJid, reply);
     }
