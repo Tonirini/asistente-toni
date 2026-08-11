@@ -22,7 +22,7 @@ const TOOLS: ChatCompletionTool[] = [
     function: {
       name: "crear_tarea",
       description:
-        "Crea una tarea/recordatorio nuevo para Antonio. Usar cuando pide que le recuerden o anoten algo.",
+        "Crea una tarea/recordatorio nuevo para Antonio: cualquier cosa que él (o alguien más) tenga que HACER, tenga o no fecha. Es la opción por defecto para pedidos como \"pedir X\", \"comprar X\", \"llamar a X\", \"solicitar X\" — no uses crear_nota para estas.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -125,7 +125,7 @@ const TOOLS: ChatCompletionTool[] = [
     function: {
       name: "crear_nota",
       description:
-        "Guarda una nota suelta de texto libre — algo que Antonio quiere anotar pero que NO es una tarea ni un recordatorio (no tiene fecha ni acción pendiente).",
+        'Guarda información suelta que NO implica ninguna acción pendiente de Antonio (algo que le dijeron, un dato para recordar, una idea). Si lo que dice tiene un verbo de acción ("pedir", "comprar", "llamar", "pagar", "solicitar", "avisar", etc.) es una tarea pendiente, no una nota — usá crear_tarea (tipo puntual, sin fecha si no te la dan) en vez de esta.',
       parameters: {
         type: "object",
         additionalProperties: false,
